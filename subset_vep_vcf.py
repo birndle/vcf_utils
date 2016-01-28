@@ -7,8 +7,8 @@ __author__ = 'bernie'
 import argparse
 import os
 import re
-from vcf_parsing import vcf_reader
-
+import sys
+from parse_vep_vcf import vcf_reader
 
 def subset(args):
 	tree = StemNode('root')
@@ -19,7 +19,8 @@ def subset(args):
 	vcf = vcf_reader(args.ivcf, output=args.ovcf)
 	for site in vcf.read():
 		if not site.annotations:
-			raise Exception, "No VEP annotations found."
+			print >> sys.stderr, "Skipping chr%s:%s %s -> %s because no VEP annotations present." % (site['CHROM'], site['POS'], site['REF'], site['ALT'])
+			continue
 		for a in site.annotations:
 			if tree.eval(a) and check_gene(a, hgnc, ensg):
 				site.write_line()
@@ -97,47 +98,48 @@ class StemNode:
 
 class LeafNode:
 	def __init__(self, expr):
-		self.fn = self.define_operator(expr)
+		if not expr:
+			self.fn = lambda x: True
+			self.checked = True
+		else:
+			self.fn = self.define_operator(expr)
+			self.checked = False
 
 	def eval(self, d):
+		if not self.checked:
+			if self.key not in d:
+				raise Exception, "\"%s\" not in annotation field." % self.key
+			self.checked = True 
 		return self.fn(d)
 
 	def define_operator(self, e):
-		if '!=' in e:
-			key, val = self.safe_split(e, '!=')
-			return lambda d: d[key] != val
-		elif '!CONTAINS' in e:
-			key, val = self.safe_split(e, '!CONTAINS')
-			return lambda d: val not in d[key].split(',')
-		elif '!IN' in e:
-			key, val = self.safe_split(e, '!IN')
-			return lambda d: d[key] not in val.split(',')
-		elif '!~' in e:
-			key, val = self.safe_split(e, '!~')
-			return lambda d: not re.match(val, d[key])
-		elif '=' in e:
-			key, val = self.safe_split(e, '=')
-			return lambda d: d[key] == val
-		elif 'CONTAINS' in e:
-			key, val = self.safe_split(e, 'CONTAINS')
-			return lambda d: val in d[key].split(',')
-		elif 'IN' in e:
-			key, val = self.safe_split(e, 'IN')
-			return lambda d: d[key] in val.split(',')
-		elif '~' in e:
-			key, val = self.safe_split(e, '~')
-			return lambda d: re.match(val, d[key])
-		else:
+		match = re.search('(!)?(=|CONTAINS|IN|~)', e)
+		if not match:
 			raise Exception, "Invalid logical expression: \"%s\". Valid operators are =, !, ~, IN, CONTAINS." % e
+		
+		neg, oper = match.groups()
+		key, val = map(lambda s: s.strip(), e.split(match.group(0)))
+		self.key = key
 
-	def safe_split(self, e, by):
-		l = e.split(by)
-		if len(l) != 2:
-			raise Exception, "Non-binary expression: \"%s\"" % e
-		return map(lambda s: s.strip(), l)
+		if '=' == oper:
+			fn = lambda d: d[key] == val
+		elif 'CONTAINS' in e:
+			fn = lambda d: val in d[key].split(',')
+		elif 'IN' in e:
+			fn = lambda d: d[key] in val.split(',')
+		elif '~' in e:
+			fn = lambda d: re.match(val, d[key])
+
+		if neg:
+			return lambda x: not fn(x)
+		else: 
+			return fn
 
 
 def build_tree(expr, parent):
+	if not expr:
+		parent.add_child(LeafNode(expr))
+		return
 	clauses, conjuncts = parse_expression(expr)
 	if '&' in conjuncts and '|' in conjuncts:
 		raise Exception, "Invalid logical expression: \"%s\". Consider using parentheses." % expr
@@ -151,6 +153,7 @@ def build_tree(expr, parent):
 		parent.add_child(newParent)
 		for clause in clauses:
 			build_tree(clause.strip('( )'), parent=newParent)
+
 
 if __name__ == '__main__':
 	parser = argparse.ArgumentParser()
@@ -166,16 +169,16 @@ if __name__ == '__main__':
 
 	if args.ensg and args.symbol:
 		parser.error('Pick either --ensg or --symbol. Not sure how to deal with both.') 
-	if '&&' in args.expr or '||' in args.expr:
+	if args.expr and ('&&' in args.expr or '||' in args.expr):
 		parser.error('Invalid logical expression. Use & and | for logical AND/OR operations.')
 
 	subset(args)
 
 	# Testing code
-	# e = 'Gene=DMD | (Consequence CONTAINS missense_variant & Consequence CONTAINS frameshift_variant) | Gene IN ADSG,AA1'
+	# e = 'Gene=DMD | Gene IN ADSG,AA1'
 	# root = StemNode('root')
 	# build_tree(e, root)
-	# ann = {'Gene' : 'AA1', 'Consequence' : 'frameshift_variant,missense_variant', 'AC' : '5'}
+	# ann = {'Gene' : 'AA1', 'Consequence' : 'stop_gained_variant,missense_variant', 'AC' : '5'}
 	# print root.eval(ann)
 
 

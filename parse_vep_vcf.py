@@ -1,6 +1,7 @@
 """
-Class built for easy access to VCF file info. Similar to PyVCF.
+Class built for easy access to VCF file info, including any VEP annotations.
 
+Similar to PyVCF interface.
 """
 
 __author__ = 'bernie'
@@ -13,8 +14,6 @@ import os
 import subprocess as sp
 import errno
 from collections import defaultdict
-
-sys.path.append('/humgen/atgu1/fs03/birnbaum/maclab_scripts/vcf')
 from minimal_representation import get_minimal_representation 
 
 class vcf_reader:
@@ -182,7 +181,7 @@ class vcf_reader:
 	"""
 	def seek_out_variant(self, chrom, pos, ref, alt):
 		pos = int(pos)
-		leeway = max([200, len(ref), len(alt)])
+		leeway = max([len(ref), len(alt)])
 		target = get_minimal_representation(pos, ref, alt)
 		found = False
 		reg = tuple(map(str,(chrom, pos-leeway, pos+leeway)))
